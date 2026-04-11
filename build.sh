@@ -35,7 +35,7 @@ OUTPUT_DIR="${WORKDIR}/output"
 CORES_DIR="${WORKDIR}/cores"
 OVERLAY_DIR="${WORKDIR}/overlay"
 DEFCONFIG="${WORKDIR}/configs/gamestick_rk3032_defconfig"
-GAMESTICK_BACKUP_IMG=""  # Chemin vers l'image backup de ta SD originale
+GAMESTICK_BACKUP_IMG="${WORKDIR}/gamestick_custom.img"  # Chemin vers l'image backup de ta SD originale
 
 # Cores à compiler (adaptés aux 256 Mo de RAM du RK3032)
 # Légers = OK, Lourds = à éviter (PPSSPP, Dolphin, etc.)
@@ -380,7 +380,8 @@ setup_libretro_cores_package() {
             mame2003_plus)  REPO_URL="https://github.com/libretro/mame2003-plus-libretro.git"
                             SO_NAME="mame2003_plus_libretro.so" ;;
             cap32)          REPO_URL="https://github.com/libretro/libretro-cap32.git"
-                            SO_NAME="cap32_libretro.so" ;;
+                            SO_NAME="cap32_libretro.so"
+                            EXTRA_MAKE_OPTS="LDLIBS=-lm" ;;
             fuse)           REPO_URL="https://github.com/libretro/fuse-libretro.git"
                             SO_NAME="fuse_libretro.so" ;;
             vice_x64)       REPO_URL="https://github.com/libretro/vice-libretro.git"
@@ -436,7 +437,6 @@ define ${PKG_VAR}_BUILD_CMDS
 		CC="\$(TARGET_CC) -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -U_TIME_BITS -D_TIME_BITS=32" \\
 		CXX="\$(TARGET_CXX) -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -U_TIME_BITS -D_TIME_BITS=32" \\
 		AR="\$(TARGET_AR)" \\
-		LDFLAGS="-lm" \\
 		platform=unix \\
 		${EXTRA_MAKE_OPTS} \\
 		${MAKEFILE_TARGET} \\
@@ -445,7 +445,7 @@ endef
 
 define ${PKG_VAR}_INSTALL_TARGET_CMDS
 	mkdir -p \$(TARGET_DIR)/usr/lib/libretro
-	\$(INSTALL) -m 0644 \$(@D)/${SO_NAME} \\
+	\$(INSTALL) -m 0644 \$(@D)/${BUILD_SUBDIR}/${SO_NAME} \\
 		\$(TARGET_DIR)/usr/lib/libretro/${SO_NAME}
 endef
 
