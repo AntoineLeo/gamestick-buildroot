@@ -118,7 +118,8 @@ cmd_setup() {
         dosfstools \
         mtools \
         parted \
-        e2fsprogs
+        e2fsprogs \
+        squashfs-tools
  
     # Télécharger Buildroot
     if [ ! -d "${BUILDROOT_DIR}" ]; then
@@ -159,43 +160,43 @@ setup_retroarch_package() {
     # Config.in
     cat > "${PKG_DIR}/Config.in" << 'CONFIGIN'
 config BR2_PACKAGE_RETROARCH
-	bool "retroarch"
-	depends on BR2_TOOLCHAIN_HAS_THREADS
-	select BR2_PACKAGE_ZLIB
-	help
-	  RetroArch is the official reference frontend for the
-	  libretro API. It provides a unified interface for running
-	  libretro cores (emulators, game engines, etc.).
- 
-	  https://www.retroarch.com
- 
-if BR2_PACKAGE_RETROARCH
- 
-config BR2_PACKAGE_RETROARCH_SDL2
-	bool "SDL2 video/audio driver"
-	default y
-	select BR2_PACKAGE_SDL2
- 
-config BR2_PACKAGE_RETROARCH_ALSA
-	bool "ALSA audio driver"
-	default y
-	select BR2_PACKAGE_ALSA_LIB
- 
-config BR2_PACKAGE_RETROARCH_UDEV
-	bool "udev input driver"
-	default y
-	select BR2_PACKAGE_EUDEV
- 
-config BR2_PACKAGE_RETROARCH_FREETYPE
-	bool "FreeType font rendering"
-	default y
-	select BR2_PACKAGE_FREETYPE
- 
-config BR2_PACKAGE_RETROARCH_NETWORKING
-	bool "Networking support"
-	default y
- 
-endif
+bool "retroarch"
+depends on BR2_TOOLCHAIN_HAS_THREADS
+select BR2_PACKAGE_ZLIB
+help
+  RetroArch is the official reference frontend for the
+  libretro API. It provides a unified interface for running
+  libretro cores (emulators, game engines, etc.).
+
+  https://www.retroarch.com
+
+   if BR2_PACKAGE_RETROARCH
+   
+   config BR2_PACKAGE_RETROARCH_SDL2
+       bool "SDL2 video/audio driver"
+       default y
+       select BR2_PACKAGE_SDL2
+   
+   config BR2_PACKAGE_RETROARCH_ALSA
+       bool "ALSA audio driver"
+       default y
+       select BR2_PACKAGE_ALSA_LIB
+   
+   config BR2_PACKAGE_RETROARCH_UDEV
+       bool "udev input driver"
+       default y
+       select BR2_PACKAGE_EUDEV
+   
+   config BR2_PACKAGE_RETROARCH_FREETYPE
+       bool "FreeType font rendering"
+       default y
+       select BR2_PACKAGE_FREETYPE
+   
+   config BR2_PACKAGE_RETROARCH_NETWORKING
+       bool "Networking support"
+       default y
+   
+   endif
 CONFIGIN
  
     # retroarch.mk (Makefile Buildroot)
@@ -397,8 +398,8 @@ setup_libretro_cores_package() {
                                  MAKEFILE_OPTS="-f Makefile.libretro"
                                  EXTRA_MAKE_OPTS="DYNAREC=ari64 HAVE_NEON=1"
                                  GIT_SUBMODULES="YES" ;;
-            stella)              GH_REPO="stella-libretro"
-                                 SO_NAME="stella_libretro.so" ;;
+            stella)              GH_REPO="stella2014-libretro"
+                                 SO_NAME="stella2014_libretro.so" ;;
             prosystem)           GH_REPO="prosystem-libretro"
                                  SO_NAME="prosystem_libretro.so" ;;
             handy)               GH_REPO="libretro-handy"
@@ -422,10 +423,10 @@ setup_libretro_cores_package() {
         # Config.in
         cat > "${PKG_DIR}/Config.in" << EOF
 config BR2_PACKAGE_${PKG_VAR}
-	bool "libretro-${core}"
-	depends on BR2_PACKAGE_RETROARCH
-	help
-	  Libretro core: ${core}
+bool "libretro-${core}"
+depends on BR2_PACKAGE_RETROARCH
+help
+Libretro core: ${core}
 EOF
  
         # Makefile Buildroot (.mk) — pattern Batocera
@@ -434,13 +435,14 @@ EOF
         local SITE_LINE
         if [ "${GIT_SUBMODULES}" = "YES" ]; then
             SITE_LINE="${PKG_VAR}_SITE = https://github.com/${GH_AUTHOR}/${GH_REPO}.git
-${PKG_VAR}_SITE_METHOD = git
-${PKG_VAR}_GIT_SUBMODULES = YES"
+        ${PKG_VAR}_SITE_METHOD = git
+        ${PKG_VAR}_GIT_SUBMODULES = YES"
         else
             SITE_LINE="${PKG_VAR}_SITE = \$(call github,${GH_AUTHOR},${GH_REPO},\$(${PKG_VAR}_VERSION))"
         fi
  
         cat > "${PKG_DIR}/${PKG_NAME}.mk" << EOF
+
 ################################################################################
 # ${PKG_NAME} — pattern Batocera
 ################################################################################
@@ -494,7 +496,7 @@ cmd_configure() {
 # GameStick Lite 4K (M8) — Buildroot defconfig
 # Cible : Rockchip RK3032 (Cortex-A7, ARMv7-A, VFPv4, NEON, 256 Mo RAM)
 # =============================================================================
- 
+
 # --- Architecture ARM ---
 BR2_arm=y
 BR2_DOWNLOAD_FORCE_CHECK_HASHES=n
@@ -504,16 +506,19 @@ BR2_ARM_FPU_NEON_VFPV4=y
 BR2_ARM_INSTRUCTIONS_THUMB2=y
 BR2_OPTIMIZE_2=y
 BR2_SHARED_LIBS=y
-BR2_TARGET_OPTIMIZATION="-U_TIME_BITS -D_TIME_BITS=32"
- 
+BR2_TARGET_OPTIMIZATION="-U_TIME_BITS -D_TIME_BITS=32 -std=gnu11"
 # --- Toolchain ---
-BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_KERNEL_HEADERS_VERSION=y
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_4=y
+BR2_DEFAULT_KERNEL_HEADERS="4.4.302"
+BR2_DEFAULT_KERNEL_VERSION="4.4.302"
+BR2_PACKAGE_GLIBC_KERNEL_COMPAT=y
 BR2_TOOLCHAIN_BUILDROOT_CXX=y
-BR2_GCC_VERSION_13_X=y
-BR2_TOOLCHAIN_BUILDROOT_WCHAR=y
-BR2_TOOLCHAIN_BUILDROOT_LOCALE=y
-BR2_PTHREAD_LIB="glibc"
- 
+BR2_TOOLCHAIN_HAS_SSP=n
+BR2_SSP_NONE=y
+BR2_RELRO_NONE=y
+BR2_FORTIFY_SOURCE_NONE=y
+
 # --- Système ---
 BR2_INIT_BUSYBOX=y
 BR2_SYSTEM_BIN_SH_BUSYBOX=y
@@ -522,23 +527,23 @@ BR2_TARGET_GENERIC_ISSUE="GameStick Lite 4K - Custom RetroArch Build"
 BR2_TARGET_GENERIC_GETTY_PORT="console"
 BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
 BR2_ROOTFS_OVERLAY="$(TOPDIR)/../overlay"
- 
+
 # --- Pas de kernel/bootloader (on garde ceux d'origine) ---
 BR2_LINUX_KERNEL=n
- 
+
 # --- Filesystem ---
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
-BR2_TARGET_ROOTFS_EXT2_SIZE="128M"
+BR2_TARGET_ROOTFS_EXT2_SIZE="256M"
 BR2_TARGET_ROOTFS_TAR=y
- 
+
 # --- Paquets système de base ---
 BR2_PACKAGE_BUSYBOX=y
 BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
- 
+
 # --- Ajout dépendance RetroArch
 BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
- 
+
 # --- Graphique / Vidéo ---
 BR2_PACKAGE_SDL2=y
 BR2_PACKAGE_SDL2_KMSDRM=n
@@ -546,32 +551,32 @@ BR2_PACKAGE_SDL2_DIRECTFB=n
 BR2_PACKAGE_SDL2_OPENGLES=n
 BR2_PACKAGE_SDL2_X11=n
 BR2_PACKAGE_LIBDRM=n
- 
+
 # --- Audio ---
 BR2_PACKAGE_ALSA_LIB=y
 BR2_PACKAGE_ALSA_UTILS=y
 BR2_PACKAGE_ALSA_UTILS_AMIXER=y
 BR2_PACKAGE_ALSA_UTILS_APLAY=y
- 
+
 # --- Input (manettes) ---
 BR2_PACKAGE_EUDEV=y
 BR2_PACKAGE_EVTEST=y
- 
+
 # --- Libs graphiques ---
 BR2_PACKAGE_ZLIB=y
 BR2_PACKAGE_LIBPNG=y
 BR2_PACKAGE_FREETYPE=y
- 
+
 # --- Réseau (optionnel mais utile pour debug SSH) ---
-BR2_PACKAGE_DROPBEAR=y
-BR2_PACKAGE_DHCPCD=y
-BR2_PACKAGE_WIRELESS_TOOLS=y
-BR2_PACKAGE_WPA_SUPPLICANT=y
- 
+BR2_PACKAGE_DROPBEAR=n
+BR2_PACKAGE_DHCPCD=n
+BR2_PACKAGE_WIRELESS_TOOLS=n
+BR2_PACKAGE_WPA_SUPPLICANT=n
+
 # --- Outils debug ---
 BR2_PACKAGE_STRACE=y
 BR2_PACKAGE_GDB=n
- 
+
 # --- RetroArch ---
 BR2_PACKAGE_RETROARCH=y
 BR2_PACKAGE_RETROARCH_SDL2=y
@@ -579,7 +584,7 @@ BR2_PACKAGE_RETROARCH_ALSA=y
 BR2_PACKAGE_RETROARCH_UDEV=y
 BR2_PACKAGE_RETROARCH_FREETYPE=y
 BR2_PACKAGE_RETROARCH_NETWORKING=y
- 
+
 # --- Cores libretro ---
 BR2_PACKAGE_LIBRETRO_FCEUMM=y
 BR2_PACKAGE_LIBRETRO_GAMBATTE=y
@@ -617,167 +622,6 @@ DEFCONFIG
     log "Prochaine étape : ./build.sh build"
 }
  
-# =============================================================================
-# ÉTAPE 4 : Overlay (fichiers ajoutés au rootfs)
-# =============================================================================
- 
-create_overlay() {
-    log "Création de l'overlay filesystem..."
- 
-    # --- Script de démarrage S99retroarch ---
-    cat > "${OVERLAY_DIR}/etc/init.d/S99retroarch" << 'INITSCRIPT'
-#!/bin/sh
-#
-# Démarre RetroArch au boot
-#
- 
-RETROARCH_BIN=/usr/bin/retroarch
-RETROARCH_CFG=/etc/retroarch/retroarch.cfg
-RETROARCH_LOG=/tmp/retroarch.log
-CORES_DIR=/usr/lib/libretro
-ROMS_DIR=/sdcard/roms
-SAVES_DIR=/sdcard/saves
- 
-case "$1" in
-    start)
-        echo "Démarrage de RetroArch..."
- 
-        # Monter la partition userdata si pas déjà fait
-        if [ ! -d /sdcard ]; then
-            mkdir -p /sdcard
-        fi
- 
-        # Chercher la partition userdata (la plus grande partition)
-        USERDATA_DEV=""
-        for dev in /dev/mmcblk0p5 /dev/mmcblk0p4 /dev/mmcblk0p3; do
-            if [ -b "$dev" ]; then
-                USERDATA_DEV="$dev"
-                break
-            fi
-        done
- 
-        if [ -n "$USERDATA_DEV" ]; then
-            mount -t ext4 "$USERDATA_DEV" /sdcard 2>/dev/null || true
-        fi
- 
-        # Créer les dossiers nécessaires
-        mkdir -p "$ROMS_DIR" "$SAVES_DIR"
-        mkdir -p /sdcard/system    # BIOS
-        mkdir -p /sdcard/config    # Override configs
-        mkdir -p /sdcard/shaders
-        mkdir -p /sdcard/thumbnails
- 
-        # Lancer RetroArch en plein écran
-        export HOME=/root
-        export XDG_CONFIG_HOME=/etc
-        export SDL_VIDEODRIVER=fbdev
-        export SDL_AUDIODRIVER=alsa
- 
-        # Attendre que le framebuffer soit prêt
-        sleep 2
- 
-        "$RETROARCH_BIN" --config "$RETROARCH_CFG" \
-            --verbose \
-            > "$RETROARCH_LOG" 2>&1 &
-        ;;
- 
-    stop)
-        echo "Arrêt de RetroArch..."
-        killall retroarch 2>/dev/null
-        sync
-        umount /sdcard 2>/dev/null
-        ;;
- 
-    restart)
-        $0 stop
-        sleep 1
-        $0 start
-        ;;
- 
-    *)
-        echo "Usage: $0 {start|stop|restart}"
-        exit 1
-        ;;
-esac
-INITSCRIPT
-    chmod +x "${OVERLAY_DIR}/etc/init.d/S99retroarch"
- 
-    # --- Configuration RetroArch optimisée pour RK3032 ---
-    mkdir -p "${OVERLAY_DIR}/etc/retroarch"
-    cat > "${OVERLAY_DIR}/etc/retroarch/retroarch.cfg" << 'RACFG'
-# =============================================================================
-# RetroArch — Configuration GameStick Lite 4K (RK3032, 256 Mo RAM)
-# =============================================================================
- 
-# --- Chemins ---
-libretro_directory = "/usr/lib/libretro"
-libretro_info_path = "/usr/share/retroarch/info"
-content_directory = "/sdcard/roms"
-savefile_directory = "/sdcard/saves"
-savestate_directory = "/sdcard/saves"
-system_directory = "/sdcard/system"
-assets_directory = "/usr/share/retroarch/assets"
-rgui_browser_directory = "/sdcard/roms"
-playlist_directory = "/sdcard/playlists"
-core_options_path = "/sdcard/config/retroarch-core-options.cfg"
- 
-# --- Vidéo ---
-video_driver = "sdl2"
-video_fullscreen = "true"
-video_vsync = "true"
-video_max_swapchain_images = "2"
-video_smooth = "false"
-video_scale_integer = "true"
-video_aspect_ratio_auto = "true"
-video_font_size = "18"
-video_msg_pos_x = "0.02"
-video_msg_pos_y = "0.98"
- 
-# --- Audio ---
-audio_driver = "alsa"
-audio_device = "default"
-audio_latency = "64"
-audio_rate_control = "true"
-audio_rate_control_delta = "0.005"
- 
-# --- Input (manettes 2.4 GHz du GameStick) ---
-input_driver = "udev"
-input_joypad_driver = "udev"
-input_autodetect_enable = "true"
-input_exit_emulator = "escape"
-input_menu_toggle_gamepad_combo = "6"
-# Combo = Start + Select pour ouvrir le menu
- 
-# --- Interface ---
-menu_driver = "rgui"
-# RGUI = le plus léger, adapté aux 256 Mo de RAM
-rgui_show_start_screen = "false"
-menu_show_online_updater = "false"
-menu_show_core_updater = "false"
- 
-# --- Performance (critique avec 256 Mo) ---
-video_threaded = "true"
-audio_enable = "true"
-rewind_enable = "false"
-# Désactiver le rewind : économise beaucoup de RAM
-savestate_auto_save = "false"
-savestate_auto_load = "false"
- 
-# --- Réseau ---
-network_cmd_enable = "false"
-stdin_cmd_enable = "false"
- 
-# --- Scanner de contenu ---
-content_database_path = "/usr/share/retroarch/database/rdb"
-cheat_database_path = "/usr/share/retroarch/database/cht"
-cursor_directory = "/usr/share/retroarch/database/cursors"
- 
-# --- Logging ---
-log_verbosity = "false"
-RACFG
- 
-    log "Overlay créé dans ${OVERLAY_DIR}"
-}
  
 # =============================================================================
 # ÉTAPE 5 : Compilation
@@ -789,8 +633,11 @@ cmd_build() {
     log "Ceci peut prendre 1-3 heures selon votre machine."
     log ""
  
-    # Créer l'overlay avant de compiler
-    create_overlay
+    # Vérifier que l'overlay existe
+    if [ ! -d "${OVERLAY_DIR}/etc/init.d" ]; then
+        err "Overlay manquant ! Le dossier ${OVERLAY_DIR} doit contenir les fichiers du rootfs."
+        exit 1
+    fi
  
     cd "${BUILDROOT_DIR}"
  
@@ -885,79 +732,215 @@ cmd_cores() {
 cmd_image() {
     log "Assemblage de l'image SD finale..."
  
-    local ROOTFS="${BUILDROOT_DIR}/output/images/rootfs.ext4"
+    # --- Le rootfs Buildroot peut être en ext4 ou squashfs ---
+    # Le GameStick d'origine utilise squashfs compressé gzip.
+    # On convertit notre rootfs ext4/tar en squashfs pour correspondre.
+    local ROOTFS_TAR="${BUILDROOT_DIR}/output/images/rootfs.tar"
+    local ROOTFS_EXT4="${BUILDROOT_DIR}/output/images/rootfs.ext4"
+    local ROOTFS_SQUASHFS="${OUTPUT_DIR}/rootfs_new.img"
     local FINAL_IMG="${OUTPUT_DIR}/gamestick_custom.img"
  
-    if [ ! -f "${ROOTFS}" ]; then
-        err "rootfs.ext4 introuvable. Lancez d'abord ./build.sh build"
+    if [ ! -f "${ROOTFS_TAR}" ] && [ ! -f "${ROOTFS_EXT4}" ]; then
+        err "Aucun rootfs trouvé. Lancez d'abord ./build.sh build"
+        exit 1
+    fi
+ 
+    if [ -z "${GAMESTICK_BACKUP_IMG}" ] || [ ! -f "${GAMESTICK_BACKUP_IMG}" ]; then
+        err "Image backup non configurée !"
+        err "Définis GAMESTICK_BACKUP_IMG dans build.sh (chemin vers ton dump gamestick_backup.img)"
         exit 1
     fi
  
     mkdir -p "${OUTPUT_DIR}"
  
-    cat << 'EOF'
-# =============================================================================
-# ASSEMBLAGE DE L'IMAGE SD
-# =============================================================================
-#
-# L'image SD du GameStick a cette structure :
-#
-#   Offset     | Taille | Contenu
-#   -----------|--------|----------------------------------
-#   0x0000     | 1 Mo   | uboot (bootloader Rockchip)
-#   0x100000   | 2 Mo   | trust (ARM Trusted Firmware)
-#   0x300000   | 9 Mo   | boot (kernel + DTB + config)
-#   0xC00000   | ~88 Mo | rootfs ← ON REMPLACE CELUI-CI
-#   ~100 Mo    | reste  | userdata (ROMs, saves)
-#
-# IMPORTANT : On garde les 3 premières partitions de l'image originale !
-# Seul le rootfs est remplacé par notre build Buildroot.
-#
-# =============================================================================
-EOF
+    # =========================================================================
+    # Étape 1 : Convertir le rootfs en squashfs (format du GameStick)
+    # =========================================================================
+    log "Conversion du rootfs en squashfs (gzip)..."
  
-    if [ -z "${GAMESTICK_BACKUP_IMG}" ] || [ ! -f "${GAMESTICK_BACKUP_IMG}" ]; then
-        warn ""
-        warn "Image backup non configurée !"
-        warn ""
-        warn "Pour assembler l'image finale, tu dois :"
-        warn "  1. Définir GAMESTICK_BACKUP_IMG dans build.sh"
-        warn "     (chemin vers ton dump gamestick_backup.img)"
-        warn "  2. Relancer ./build.sh image"
-        warn ""
-        warn "En attendant, le rootfs est disponible ici :"
-        warn "  ${ROOTFS}"
-        warn ""
-        warn "Tu peux le flasher manuellement :"
-        warn "  # Identifier l'offset de la partition rootfs"
-        warn "  fdisk -l gamestick_backup.img"
-        warn "  # Copier le nouveau rootfs par-dessus"
-        warn "  dd if=${ROOTFS} of=gamestick_backup.img seek=<OFFSET> bs=512 conv=notrunc"
-        warn ""
-        return
+    local ROOTFS_EXTRACT="${OUTPUT_DIR}/rootfs_extracted"
+    rm -rf "${ROOTFS_EXTRACT}"
+    mkdir -p "${ROOTFS_EXTRACT}"
+ 
+    if [ -f "${ROOTFS_TAR}" ]; then
+        tar xf "${ROOTFS_TAR}" -C "${ROOTFS_EXTRACT}"
+    else
+        # Monter l'ext4 et copier
+        local TMP_MNT="${OUTPUT_DIR}/tmp_mnt"
+        mkdir -p "${TMP_MNT}"
+        sudo mount -o loop,ro "${ROOTFS_EXT4}" "${TMP_MNT}"
+        sudo cp -a "${TMP_MNT}/." "${ROOTFS_EXTRACT}/"
+        sudo umount "${TMP_MNT}"
+        rmdir "${TMP_MNT}"
     fi
  
+    rm -f "${ROOTFS_SQUASHFS}"
+    sudo mksquashfs "${ROOTFS_EXTRACT}" "${ROOTFS_SQUASHFS}" \
+        -comp gzip -noappend -quiet
+ 
+    local NEW_SIZE=$(stat -c%s "${ROOTFS_SQUASHFS}")
+    log "Nouveau rootfs squashfs : $(( NEW_SIZE / 1024 / 1024 )) Mo"
+ 
+    rm -rf "${ROOTFS_EXTRACT}"
+ 
+    # =========================================================================
+    # Étape 2 : Copier l'image originale
+    # =========================================================================
     log "Copie de l'image originale..."
     cp "${GAMESTICK_BACKUP_IMG}" "${FINAL_IMG}"
  
-    # Identifier les partitions
-    log "Partitions de l'image :"
-    fdisk -l "${FINAL_IMG}"
+    # =========================================================================
+    # Étape 3 : Monter l'image avec losetup et identifier les partitions
+    # =========================================================================
+    log "Montage de l'image avec losetup..."
  
-    # Trouver l'offset de la partition rootfs (partition 4 typiquement)
-    local ROOTFS_START=$(fdisk -l "${FINAL_IMG}" 2>/dev/null | \
-        awk '/^.*img4/{print $2}')
+    # Détacher tout loop device existant sur cette image
+    sudo losetup -j "${FINAL_IMG}" | cut -d: -f1 | while read dev; do
+        sudo losetup -d "$dev" 2>/dev/null || true
+    done
  
-    if [ -z "${ROOTFS_START}" ]; then
-        warn "Impossible de détecter automatiquement la partition rootfs."
-        warn "Utilise fdisk -l pour identifier le bon offset et exécute :"
-        warn "  dd if=${ROOTFS} of=${FINAL_IMG} seek=<START_SECTOR> bs=512 conv=notrunc"
-        return
+    sudo losetup -fP "${FINAL_IMG}"
+    local LOOP_DEV=$(losetup -j "${FINAL_IMG}" | head -1 | cut -d: -f1)
+ 
+    if [ -z "${LOOP_DEV}" ]; then
+        err "Impossible de monter l'image avec losetup"
+        exit 1
     fi
  
-    log "Écriture du rootfs à l'offset ${ROOTFS_START} secteurs..."
-    sudo dd if="${ROOTFS}" of="${FINAL_IMG}" \
-        seek="${ROOTFS_START}" bs=512 conv=notrunc status=progress
+    log "Image montée sur ${LOOP_DEV}"
+ 
+    # Afficher les partitions détectées
+    log "Partitions détectées :"
+    sudo fdisk -l "${LOOP_DEV}" 2>/dev/null | grep "^${LOOP_DEV}" || true
+    echo ""
+ 
+    # =========================================================================
+    # Étape 4 : Identifier la partition rootfs
+    # =========================================================================
+    # Sur le GameStick, c'est la partition 4 (après uboot, trust, boot)
+    # On la détecte par sa position : 4ème partition dans la table
+    local ROOTFS_PART="${LOOP_DEV}p4"
+ 
+    if [ ! -b "${ROOTFS_PART}" ]; then
+        err "Partition ${ROOTFS_PART} introuvable."
+        err "Partitions disponibles :"
+        ls -la ${LOOP_DEV}p* 2>/dev/null || true
+        sudo losetup -d "${LOOP_DEV}"
+        exit 1
+    fi
+ 
+    # Lire la taille de la partition rootfs d'origine (en octets)
+    local PART_SIZE=$(sudo blockdev --getsize64 "${ROOTFS_PART}")
+    log "Partition rootfs (${ROOTFS_PART}) : $(( PART_SIZE / 1024 / 1024 )) Mo"
+ 
+    # Vérifier que le nouveau rootfs tient dans la partition
+    if [ "${NEW_SIZE}" -gt "${PART_SIZE}" ]; then
+        err "Le nouveau rootfs ($(( NEW_SIZE / 1024 / 1024 )) Mo) est trop grand"
+        err "pour la partition ($(( PART_SIZE / 1024 / 1024 )) Mo) !"
+        err "Réduis le contenu du rootfs ou agrandis la partition."
+        sudo losetup -d "${LOOP_DEV}"
+        exit 1
+    fi
+ 
+    # =========================================================================
+    # Étape 5 : Vérifier le rootfs d'origine (avant remplacement)
+    # =========================================================================
+    log "Vérification du rootfs d'origine..."
+    local ORIG_MNT="${OUTPUT_DIR}/orig_rootfs_mnt"
+    mkdir -p "${ORIG_MNT}"
+ 
+    if sudo mount -t squashfs -o ro "${ROOTFS_PART}" "${ORIG_MNT}" 2>/dev/null; then
+        log "  Rootfs d'origine OK (squashfs)"
+        log "  Contenu : $(ls "${ORIG_MNT}" | tr '\n' ' ')"
+ 
+        # Vérifier la présence de RetroArch d'origine
+        if [ -f "${ORIG_MNT}/usr/bin/retroarch" ]; then
+            log "  RetroArch d'origine trouvé"
+        fi
+        if [ -f "${ORIG_MNT}/usr/bin/game" ]; then
+            log "  Frontend MiniGUI d'origine trouvé"
+        fi
+ 
+        sudo umount "${ORIG_MNT}"
+    else
+        warn "Impossible de monter le rootfs d'origine (pas du squashfs ?)"
+    fi
+ 
+    # =========================================================================
+    # Étape 6 : Écrire le nouveau rootfs
+    # =========================================================================
+    log "Écriture du nouveau rootfs sur ${ROOTFS_PART}..."
+    sudo dd if="${ROOTFS_SQUASHFS}" of="${ROOTFS_PART}" \
+        bs=4M conv=notrunc status=progress
+ 
+    sync
+ 
+    # =========================================================================
+    # Étape 7 : Vérification post-écriture
+    # =========================================================================
+    log "Vérification post-écriture..."
+ 
+    if sudo mount -t squashfs -o ro "${ROOTFS_PART}" "${ORIG_MNT}" 2>/dev/null; then
+        log "  ✅ Rootfs montable en squashfs"
+ 
+        # Vérifier les fichiers critiques
+        local CHECK_OK=true
+ 
+        if [ -f "${ORIG_MNT}/usr/bin/retroarch" ]; then
+            local RA_ARCH=$(file "${ORIG_MNT}/usr/bin/retroarch" 2>/dev/null)
+            if echo "${RA_ARCH}" | grep -q "ARM"; then
+                log "  ✅ RetroArch présent (ARM)"
+            else
+                err "  ❌ RetroArch n'est pas un binaire ARM !"
+                CHECK_OK=false
+            fi
+        else
+            err "  ❌ RetroArch absent du rootfs !"
+            CHECK_OK=false
+        fi
+ 
+        # Compter les cores
+        local CORE_COUNT=$(find "${ORIG_MNT}/usr/lib/libretro/" -name "*.so" 2>/dev/null | wc -l)
+        if [ "${CORE_COUNT}" -gt 0 ]; then
+            log "  ✅ ${CORE_COUNT} cores libretro installés"
+        else
+            warn "  ⚠ Aucun core libretro dans le rootfs"
+        fi
+ 
+        # Vérifier le script de démarrage
+        if [ -f "${ORIG_MNT}/etc/init.d/S99retroarch" ]; then
+            log "  ✅ Script de démarrage S99retroarch présent"
+        else
+            warn "  ⚠ Script S99retroarch absent"
+        fi
+ 
+        # Vérifier la config RetroArch
+        if [ -f "${ORIG_MNT}/etc/retroarch/retroarch.cfg" ]; then
+            log "  ✅ Configuration RetroArch présente"
+        else
+            warn "  ⚠ retroarch.cfg absent"
+        fi
+ 
+        sudo umount "${ORIG_MNT}"
+ 
+        if [ "${CHECK_OK}" = false ]; then
+            err "Certaines vérifications ont échoué !"
+        fi
+    else
+        err "  ❌ Impossible de monter le nouveau rootfs !"
+        err "  L'image est probablement corrompue."
+        sudo losetup -d "${LOOP_DEV}"
+        rmdir "${ORIG_MNT}" 2>/dev/null
+        exit 1
+    fi
+ 
+    rmdir "${ORIG_MNT}" 2>/dev/null
+ 
+    # =========================================================================
+    # Étape 8 : Nettoyage
+    # =========================================================================
+    sudo losetup -d "${LOOP_DEV}"
+    rm -f "${ROOTFS_SQUASHFS}"
  
     log ""
     log "=========================================="
@@ -965,6 +948,7 @@ EOF
     log "=========================================="
     log ""
     log "Fichier : ${FINAL_IMG}"
+    log "Taille  : $(( $(stat -c%s "${FINAL_IMG}") / 1024 / 1024 )) Mo"
     log ""
     log "Pour flasher sur SD :"
     log "  sudo dd if=${FINAL_IMG} of=/dev/sdX bs=4M status=progress conv=fsync"

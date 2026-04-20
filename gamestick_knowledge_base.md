@@ -52,6 +52,10 @@
 
 Le Game Stick tourne sous **Linux embarqué**, basé sur **BusyBox**, avec un frontend graphique custom basé sur **MiniGUI**.
 
+### Versions de GLIBC supportés
+D'après le fichier /lib/libc.so.6 la libc la plus élevé supportée est la version **GLIC 2.29**
+
+
 ### Chaîne de démarrage
 
 ```
@@ -319,7 +323,7 @@ sudo nano /home/user/rootfs_extracted/etc/init.d/S50ui
 
 # Recompresser
 sudo mksquashfs /home/user/rootfs_extracted /home/user/rootfs_new.img \
-  -comp gzip -noappend
+  -comp gzip -noappend -quiet
 
 # Vérifier que la nouvelle image rentre dans la partition
 sudo fdisk -l /dev/loop0 | grep loop0p4
@@ -570,6 +574,7 @@ menu_driver = "rgui"
 | `sudo losetup -d /dev/loop0` | Démonter une image |
 | `sudo fdisk -l /dev/loop0` | Lire la table de partitions |
 | `sudo dd if=/dev/sdb of=gamestick_backup_orig.img bs=4M conv=fdatasync,notrunc iflag=fullblock status=progress` | Dump / flash d'images brutes |
+| `objdump -T snes9x2005_libretro.so \| grep GLIBC \| sed 's/.*GLIBC_/GLIBC_/' \| sort -uV` | Analyse version GLIBC |
 | `dd` | Dump / flash d'images brutes |
 | `squashfs-tools` | Décompresser/recompresser le rootfs |
 | `sqlite3` | Explorer/modifier la base de données des jeux |
