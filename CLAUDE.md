@@ -23,7 +23,7 @@ All operations go through `build.sh`:
 ./build.sh clean        # Remove build artifacts
 ```
 
-The `image` step requires an original GameStick backup image (`gamestick.img`) in the working directory. The output is `output/gamestick_custom.img`, ready to flash with `dd` or balenaEtcher.
+The `image` step requires an original GameStick backup image (`gamestick_orig.img`) in the working directory. The output is `output/gamestick_custom.img`, ready to flash with `dd` or balenaEtcher.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ The `image` step requires an original GameStick backup image (`gamestick.img`) i
 
 | File | Role |
 |------|------|
-| `build.sh` | Main orchestration script (1008 lines); all build logic lives here |
+| `build.sh` | Main orchestration script (~992 lines); all build logic lives here |
 | `configs/gamestick_rk3032_defconfig` | Buildroot board config: arch, ABI, enabled packages |
 | `overlay/etc/init.d/S99retroarch` | Init.d script that mounts userdata and launches RetroArch |
 | `overlay/etc/retroarch/retroarch.cfg` | Tuned RetroArch config (SDL2/fbdev video, ALSA audio, RGUI menu) |
@@ -49,8 +49,8 @@ The final image preserves three partitions from the original firmware and only r
 uboot (1 MB)    ← original, preserved
 trust (2 MB)    ← original, preserved
 boot (9 MB)     ← original, preserved (contains kernel + DTB)
-rootfs (128 MB) ← REPLACED with new EXT4 rootfs
-userdata (rest) ← original, preserved (ROMs, saves go here at /sdcard)
+rootfs (65 MB)  ← REPLACED with new squashfs rootfs
+userdata (rest) ← original, preserved (Libretro cores, ROMs & saves go here at /sdcard)
 ```
 
 ### Runtime Flow
@@ -58,8 +58,8 @@ userdata (rest) ← original, preserved (ROMs, saves go here at /sdcard)
 1. U-Boot → ARM Trusted Firmware → original Linux kernel (from boot partition)
 2. BusyBox init runs `/etc/init.d/rcS`
 3. `S99retroarch` auto-detects and mounts userdata partition to `/sdcard`
-4. RetroArch launches with config from `/etc/retroarch/retroarch.cfg`
-5. Cores in `/usr/lib/libretro/*.so`, ROMs from `/sdcard/roms`, saves to `/sdcard/saves`
+4. RetroArch launches with config from `/sdcard/retroarch/retroarch.cfg`
+5. Cores in `/sdcard/libretro/*.so`, ROMs from `/sdcard/roms`, saves to `/sdcard/saves`
 
 ### Cross-Compilation
 
@@ -73,12 +73,12 @@ Compilation flags used throughout:
 ### Design Constraints (256 MB RAM)
 
 RetroArch is configured to minimize memory use:
-- **Video**: SDL2 driver, framebuffer (`fbdev`) — no OpenGL/Vulkan/X11
+- **Video**: KMS/GBM → EGL → OpenGL ES 2.0 (Mali-400 native) — no SDL2, no Vulkan, no X11
 - **Menu**: RGUI (lightweight text-based), not XMB/Ozone
 - **Disabled**: rewind, auto-save, online updaters, shaders
 - **Audio**: ALSA with rate control
 
-## Included Cores (23 total)
+## Included Cores (21 total)
 
 `fceumm` (NES), `gambatte`/`nestopia` (GB/GBC), `mgba` (GBA), `snes9x2005` (SNES), `genesis_plus_gx`/`picodrive` (MD/32X), `pcsx_rearmed` (PS1, NEON dynarec), `fbneo`/`mame2003_plus` (arcade), `cap32` (Amstrad CPC), `fuse` (ZX Spectrum), `vice_x64` (C64), `theodore` (Thomson MO/TO), `mednafen_pce_fast`/`mednafen_supergrafx` (PC Engine), `mednafen_ngp` (Neo Geo Pocket), `mednafen_wswan` (WonderSwan), `stella` (Atari 2600), `prosystem` (Atari 7800), `handy` (Atari Lynx).
 
@@ -86,4 +86,4 @@ RetroArch is configured to minimize memory use:
 
 - Ubuntu 22.04+ (or WSL2) with ~15 GB free disk, 4–8 GB RAM
 - Host packages installed by `setup` step: `gcc`, `g++`, `make`, `python3`, `libncurses-dev`, `flex`, `bison`, `device-tree-compiler`, `u-boot-tools`, `dosfstools`, `e2fsprogs`
-- Original GameStick backup image required for `image` step
+- Original GameStick backup image (`gamestick_orig.img`) required for `image` step

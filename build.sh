@@ -35,7 +35,7 @@ OUTPUT_DIR="${WORKDIR}/output"
 CORES_DIR="${WORKDIR}/cores"
 OVERLAY_DIR="${WORKDIR}/overlay"
 DEFCONFIG="${WORKDIR}/configs/gamestick_rk3032_defconfig"
-GAMESTICK_BACKUP_IMG="${WORKDIR}/gamestick_custom.img"  # Chemin vers l'image backup de ta SD originale
+GAMESTICK_BACKUP_IMG="./gamestick_orig.img"  # Chemin vers l'image backup de ta SD originale
  
 # Cores à compiler (adaptés aux 256 Mo de RAM du RK3032)
 # Légers = OK, Lourds = à éviter (PPSSPP, Dolphin, etc.)
@@ -163,40 +163,15 @@ config BR2_PACKAGE_RETROARCH
 bool "retroarch"
 depends on BR2_TOOLCHAIN_HAS_THREADS
 select BR2_PACKAGE_ZLIB
+select BR2_PACKAGE_ALSA_LIB
+select BR2_PACKAGE_EUDEV
+select BR2_PACKAGE_FREETYPE
 help
   RetroArch is the official reference frontend for the
   libretro API. It provides a unified interface for running
   libretro cores (emulators, game engines, etc.).
 
   https://www.retroarch.com
-
-   if BR2_PACKAGE_RETROARCH
-   
-   config BR2_PACKAGE_RETROARCH_SDL2
-       bool "SDL2 video/audio driver"
-       default y
-       select BR2_PACKAGE_SDL2
-   
-   config BR2_PACKAGE_RETROARCH_ALSA
-       bool "ALSA audio driver"
-       default y
-       select BR2_PACKAGE_ALSA_LIB
-   
-   config BR2_PACKAGE_RETROARCH_UDEV
-       bool "udev input driver"
-       default y
-       select BR2_PACKAGE_EUDEV
-   
-   config BR2_PACKAGE_RETROARCH_FREETYPE
-       bool "FreeType font rendering"
-       default y
-       select BR2_PACKAGE_FREETYPE
-   
-   config BR2_PACKAGE_RETROARCH_NETWORKING
-       bool "Networking support"
-       default y
-   
-   endif
 CONFIGIN
  
     # retroarch.mk (Makefile Buildroot)
@@ -212,69 +187,40 @@ RETROARCH_SITE = \$(call github,libretro,RetroArch,\$(RETROARCH_VERSION))
 RETROARCH_LICENSE = GPL-3.0+
 RETROARCH_LICENSE_FILES = COPYING
  
-RETROARCH_DEPENDENCIES = host-pkgconf zlib
- 
+RETROARCH_DEPENDENCIES = host-pkgconf zlib alsa-lib eudev freetype
+
 # --- Options de configuration ---
- 
+
 RETROARCH_CONF_OPTS = \
-	--disable-oss \
-	--disable-jack \
-	--disable-pulse \
 	--disable-x11 \
-	--disable-wayland \
-	--disable-vulkan \
+    --disable-wayland \
+    --enable-kms \
+    --enable-gbm \
+    --enable-egl \
+    --enable-gles \
+    --enable-neon \
+    --enable-floathard \
+    --disable-vulkan \
+    --disable-videocore \
+    --disable-sdl2 \
+    --disable-oss \
+	--disable-jack \
+	--disable-pulseaudio \
+    --disable-ffmpeg \
 	--disable-opengl \
 	--disable-caca \
-	--disable-qt \
+    --disable-qt \
 	--disable-discord \
 	--enable-zlib \
 	--enable-threads \
 	--enable-rgui \
-	--enable-materialui
- 
-# Cortex-A7 spécifique : activer hard-float et NEON
-ifeq ($(BR2_cortex_a7),y)
-RETROARCH_CONF_OPTS += --enable-neon --enable-floathard
-endif
- 
-# SDL2
-ifeq ($(BR2_PACKAGE_RETROARCH_SDL2),y)
-RETROARCH_CONF_OPTS += --enable-sdl2
-RETROARCH_DEPENDENCIES += sdl2
-else
-RETROARCH_CONF_OPTS += --disable-sdl2
-endif
- 
-# ALSA
-ifeq ($(BR2_PACKAGE_RETROARCH_ALSA),y)
-RETROARCH_CONF_OPTS += --enable-alsa
-RETROARCH_DEPENDENCIES += alsa-lib
-else
-RETROARCH_CONF_OPTS += --disable-alsa
-endif
- 
-# udev (manettes)
-ifeq ($(BR2_PACKAGE_RETROARCH_UDEV),y)
-RETROARCH_CONF_OPTS += --enable-udev
-RETROARCH_DEPENDENCIES += eudev
-else
-RETROARCH_CONF_OPTS += --disable-udev
-endif
- 
-# FreeType
-ifeq ($(BR2_PACKAGE_RETROARCH_FREETYPE),y)
-RETROARCH_CONF_OPTS += --enable-freetype
-RETROARCH_DEPENDENCIES += freetype
-else
-RETROARCH_CONF_OPTS += --disable-freetype
-endif
- 
-# Networking
-ifeq ($(BR2_PACKAGE_RETROARCH_NETWORKING),y)
-RETROARCH_CONF_OPTS += --enable-networking
-else
-RETROARCH_CONF_OPTS += --disable-networking
-endif
+    --disable-xmb \
+    --disable-ozone \
+	--disable-materialui \
+	--enable-alsa \
+	--enable-udev \
+	--enable-freetype \
+	--disable-networking
  
 # --- Configuration ---
  
@@ -506,7 +452,7 @@ BR2_ARM_FPU_NEON_VFPV4=y
 BR2_ARM_INSTRUCTIONS_THUMB2=y
 BR2_OPTIMIZE_2=y
 BR2_SHARED_LIBS=y
-BR2_TARGET_OPTIMIZATION="-U_TIME_BITS -D_TIME_BITS=32 -std=gnu11"
+BR2_TARGET_OPTIMIZATION="-U_TIME_BITS -D_TIME_BITS=32"
 # --- Toolchain ---
 BR2_KERNEL_HEADERS_VERSION=y
 BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_4=y
@@ -545,12 +491,7 @@ BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
 BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
 
 # --- Graphique / Vidéo ---
-BR2_PACKAGE_SDL2=y
-BR2_PACKAGE_SDL2_KMSDRM=n
-BR2_PACKAGE_SDL2_DIRECTFB=n
-BR2_PACKAGE_SDL2_OPENGLES=n
-BR2_PACKAGE_SDL2_X11=n
-BR2_PACKAGE_LIBDRM=n
+BR2_PACKAGE_LIBDRM=y
 
 # --- Audio ---
 BR2_PACKAGE_ALSA_LIB=y
@@ -567,23 +508,12 @@ BR2_PACKAGE_ZLIB=y
 BR2_PACKAGE_LIBPNG=y
 BR2_PACKAGE_FREETYPE=y
 
-# --- Réseau (optionnel mais utile pour debug SSH) ---
-BR2_PACKAGE_DROPBEAR=n
-BR2_PACKAGE_DHCPCD=n
-BR2_PACKAGE_WIRELESS_TOOLS=n
-BR2_PACKAGE_WPA_SUPPLICANT=n
-
 # --- Outils debug ---
 BR2_PACKAGE_STRACE=y
 BR2_PACKAGE_GDB=n
 
 # --- RetroArch ---
 BR2_PACKAGE_RETROARCH=y
-BR2_PACKAGE_RETROARCH_SDL2=y
-BR2_PACKAGE_RETROARCH_ALSA=y
-BR2_PACKAGE_RETROARCH_UDEV=y
-BR2_PACKAGE_RETROARCH_FREETYPE=y
-BR2_PACKAGE_RETROARCH_NETWORKING=y
 
 # --- Cores libretro ---
 BR2_PACKAGE_LIBRETRO_FCEUMM=y
@@ -624,7 +554,7 @@ DEFCONFIG
  
  
 # =============================================================================
-# ÉTAPE 5 : Compilation
+# ÉTAPE 4 : Compilation
 # =============================================================================
  
 cmd_build() {
@@ -645,26 +575,24 @@ cmd_build() {
     JOBS=$(nproc)
     log "Compilation avec ${JOBS} threads..."
  
-    make -j${JOBS} 2>&1 | tee "${WORKDIR}/build.log"
- 
-    if [ $? -eq 0 ]; then
-        log "=========================================="
-        log "  COMPILATION RÉUSSIE !"
-        log "=========================================="
-        log ""
-        log "Rootfs : ${BUILDROOT_DIR}/output/images/rootfs.ext4"
-        log "Tarball : ${BUILDROOT_DIR}/output/images/rootfs.tar"
-        log "Toolchain : ${BUILDROOT_DIR}/output/host/bin/arm-*"
-        log ""
-        log "Prochaine étape : ./build.sh image"
-    else
+    make -j${JOBS} 2>&1 | tee "${WORKDIR}/build.log" || {
         err "Compilation échouée ! Voir build.log"
         exit 1
-    fi
+    }
+
+    log "=========================================="
+    log "  COMPILATION RÉUSSIE !"
+    log "=========================================="
+    log ""
+    log "Rootfs : ${BUILDROOT_DIR}/output/images/rootfs.ext4"
+    log "Tarball : ${BUILDROOT_DIR}/output/images/rootfs.tar"
+    log "Toolchain : ${BUILDROOT_DIR}/output/host/bin/arm-*"
+    log ""
+    log "Prochaine étape : ./build.sh image"
 }
  
 # =============================================================================
-# ÉTAPE 6 : Compilation de cores supplémentaires (hors Buildroot)
+# ÉTAPE 5 : Compilation de cores supplémentaires (hors Buildroot)
 # =============================================================================
  
 cmd_cores() {
@@ -726,7 +654,7 @@ cmd_cores() {
 }
  
 # =============================================================================
-# ÉTAPE 7 : Assemblage de l'image SD
+# ÉTAPE 6 : Assemblage de l'image SD
 # =============================================================================
  
 cmd_image() {
@@ -747,7 +675,7 @@ cmd_image() {
  
     if [ -z "${GAMESTICK_BACKUP_IMG}" ] || [ ! -f "${GAMESTICK_BACKUP_IMG}" ]; then
         err "Image backup non configurée !"
-        err "Définis GAMESTICK_BACKUP_IMG dans build.sh (chemin vers ton dump gamestick_backup.img)"
+        err "Définis GAMESTICK_BACKUP_IMG dans build.sh (chemin vers ton dump gamestick_orig.img)"
         exit 1
     fi
  
