@@ -1,6 +1,18 @@
+# Build system (téléchargé automatiquement par ./build.sh setup)
+/buildroot-2025.02/
+
+# Artéfacts de build
 /build.log
-/buildroot-2025.02
-/configs
-/cores
-/overlay
+/output/
+
+# Images disque
+gamestick_orig.img
 gamestick_custom.img
+*.img
+
+# Répertoire de sortie post-build cores
+/cores/
+
+# Local uniquement
+rootfs_extracted
+.claude/settings.local.json

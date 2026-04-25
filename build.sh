@@ -140,17 +140,61 @@ cmd_setup() {
     mkdir -p "${CORES_DIR}"
  
     # Copier les packages custom dans Buildroot
+    setup_mali_headers
     setup_retroarch_package
     setup_libretro_cores_package
- 
+
     log "Setup terminé !"
     log "Prochaine étape : ./build.sh configure"
 }
  
 # =============================================================================
-# ÉTAPE 2 : Packages Buildroot custom pour RetroArch
+# ÉTAPE 2a : Headers EGL/GLES2 (Khronos) pour Mali-400
 # =============================================================================
- 
+
+setup_mali_headers() {
+    local HEADERS_DIR="${WORKDIR}/mali-headers-src"
+    log "Téléchargement des headers Khronos EGL/GLES2..."
+
+    mkdir -p "${HEADERS_DIR}/EGL" "${HEADERS_DIR}/GLES2" "${HEADERS_DIR}/KHR"
+
+    local EGL_BASE="https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api"
+    local GL_BASE="https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/api"
+
+    for f in KHR/khrplatform.h EGL/egl.h EGL/eglext.h EGL/eglplatform.h; do
+        [ -f "${HEADERS_DIR}/${f}" ] || wget -q -O "${HEADERS_DIR}/${f}" "${EGL_BASE}/${f}"
+    done
+    for f in GLES2/gl2.h GLES2/gl2ext.h GLES2/gl2platform.h; do
+        [ -f "${HEADERS_DIR}/${f}" ] || wget -q -O "${HEADERS_DIR}/${f}" "${GL_BASE}/${f}"
+    done
+
+    # Générer le stub C GLES2 depuis le header téléchargé
+    if [ ! -f "${HEADERS_DIR}/gles2_stub.c" ]; then
+        python3 - "${HEADERS_DIR}/GLES2/gl2.h" << 'PYEOF' > "${HEADERS_DIR}/gles2_stub.c"
+import re, sys
+with open(sys.argv[1]) as f:
+    content = f.read()
+print("#include <GLES2/gl2.h>")
+print()
+for m in re.finditer(r'GL_APICALL\s+([\w\s\*]+?)\s*GL_APIENTRY\s+(\w+)\s*\(([^;]*)\)\s*;', content):
+    ret, name, params = m.group(1).strip(), m.group(2), m.group(3).strip() or "void"
+    if ret == "void":
+        body = "{}"
+    elif '*' in ret:
+        body = "{ return (void*)0; }"
+    else:
+        body = "{ return (" + ret + ")0; }"
+    print("GL_APICALL " + ret + " GL_APIENTRY " + name + "(" + params + ") " + body)
+PYEOF
+    fi
+
+    log "Headers EGL/GLES2 prêts dans mali-headers-src/"
+}
+
+# =============================================================================
+# ÉTAPE 2b : Packages Buildroot custom pour RetroArch
+# =============================================================================
+
 setup_retroarch_package() {
     local PKG_DIR="${BUILDROOT_DIR}/package/retroarch"
     mkdir -p "${PKG_DIR}"
@@ -194,33 +238,33 @@ RETROARCH_DEPENDENCIES = host-pkgconf zlib alsa-lib eudev freetype
 RETROARCH_CONF_OPTS = \
 	--disable-x11 \
     --disable-wayland \
-    --enable-kms \
-    --enable-gbm \
+    --enable-opengles \
     --enable-egl \
-    --enable-gles \
+    --enable-dynamic_egl \
+    --enable-mali_fbdev \
+    --disable-opengl \
+    --disable-vulkan \
+    --disable-kms \
     --enable-neon \
     --enable-floathard \
-    --disable-vulkan \
-    --disable-videocore \
-    --disable-sdl2 \
+    --enable-threads \
+    --enable-alsa \
+    --disable-pulse \
     --disable-oss \
-	--disable-jack \
-	--disable-pulseaudio \
+    --disable-jack \
+    --disable-sdl2 \
     --disable-ffmpeg \
-	--disable-opengl \
-	--disable-caca \
-    --disable-qt \
-	--disable-discord \
-	--enable-zlib \
-	--enable-threads \
-	--enable-rgui \
+    --enable-zlib \
+    --enable-freetype \
+    --enable-rgui \
     --disable-xmb \
     --disable-ozone \
-	--disable-materialui \
-	--enable-alsa \
-	--enable-udev \
-	--enable-freetype \
-	--disable-networking
+    --disable-materialui \
+    --disable-qt \
+    --disable-discord \
+    --disable-caca \
+    --enable-udev \
+    --disable-networking
  
 # --- Configuration ---
  
@@ -229,6 +273,7 @@ define RETROARCH_CONFIGURE_CMDS
 	$(TARGET_CONFIGURE_OPTS) \
 	CFLAGS="$(TARGET_CFLAGS) -I$(STAGING_DIR)/usr/include" \
 	PKG_CONFIG="$(PKG_CONFIG_HOST_BINARY)" \
+	PKG_CONF_PATH="$(PKG_CONFIG_HOST_BINARY)" \
 	PKG_CONFIG_PATH="$(STAGING_DIR)/usr/lib/pkgconfig:$(STAGING_DIR)/usr/share/pkgconfig" \
 	PKG_CONFIG_SYSROOT_DIR="$(STAGING_DIR)" \
 	./configure \
@@ -252,11 +297,24 @@ define RETROARCH_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0644 $(@D)/retroarch.cfg $(TARGET_DIR)/etc/retroarch/retroarch.cfg
 endef
  
+define RETROARCH_INSTALL_MALI_HEADERS
+	$(foreach d,EGL GLES2 KHR,\
+		mkdir -p $(STAGING_DIR)/usr/include/$(d) && \
+		cp -n $(TOPDIR)/../mali-headers-src/$(d)/* $(STAGING_DIR)/usr/include/$(d)/ 2>/dev/null || true ;)
+	test -f $(STAGING_DIR)/usr/lib/libEGL.so || \
+		echo "void _egl_stub(void){}" | $(TARGET_CC) -shared -fPIC -o $(STAGING_DIR)/usr/lib/libEGL.so -x c -
+	$(TARGET_CC) -shared -fPIC \
+		-I$(STAGING_DIR)/usr/include \
+		-o $(STAGING_DIR)/usr/lib/libGLESv2.so \
+		$(TOPDIR)/../mali-headers-src/gles2_stub.c
+endef
+RETROARCH_PRE_CONFIGURE_HOOKS += RETROARCH_INSTALL_MALI_HEADERS
+
 define RETROARCH_FIX_CONFIG
 	$(SED) 's%-I/usr/include%-I$(STAGING_DIR)/usr/include%g' $(@D)/config.mk
 endef
 RETROARCH_POST_CONFIGURE_HOOKS += RETROARCH_FIX_CONFIG
- 
+
 $(eval $(generic-package))
 RETROMK
  
@@ -516,27 +574,27 @@ BR2_PACKAGE_GDB=n
 BR2_PACKAGE_RETROARCH=y
 
 # --- Cores libretro ---
-BR2_PACKAGE_LIBRETRO_FCEUMM=y
-BR2_PACKAGE_LIBRETRO_GAMBATTE=y
-BR2_PACKAGE_LIBRETRO_MGBA=y
+BR2_PACKAGE_LIBRETRO_FCEUMM=n
+BR2_PACKAGE_LIBRETRO_GAMBATTE=n
+BR2_PACKAGE_LIBRETRO_MGBA=n
 BR2_PACKAGE_LIBRETRO_SNES9X2005=y
-BR2_PACKAGE_LIBRETRO_GENESIS_PLUS_GX=y
-BR2_PACKAGE_LIBRETRO_NESTOPIA=y
-BR2_PACKAGE_LIBRETRO_PICODRIVE=y
-BR2_PACKAGE_LIBRETRO_MEDNAFEN_PCE_FAST=y
-BR2_PACKAGE_LIBRETRO_MEDNAFEN_SUPERGRAFX=y
-BR2_PACKAGE_LIBRETRO_MEDNAFEN_NGP=y
-BR2_PACKAGE_LIBRETRO_MEDNAFEN_WSWAN=y
-BR2_PACKAGE_LIBRETRO_FBNEO=y
-BR2_PACKAGE_LIBRETRO_MAME2003_PLUS=y
-BR2_PACKAGE_LIBRETRO_CAP32=y
-BR2_PACKAGE_LIBRETRO_FUSE=y
-BR2_PACKAGE_LIBRETRO_VICE_X64=y
-BR2_PACKAGE_LIBRETRO_THEODORE=y
-BR2_PACKAGE_LIBRETRO_PCSX_REARMED=y
-BR2_PACKAGE_LIBRETRO_STELLA=y
-BR2_PACKAGE_LIBRETRO_PROSYSTEM=y
-BR2_PACKAGE_LIBRETRO_HANDY=y
+BR2_PACKAGE_LIBRETRO_GENESIS_PLUS_GX=n
+BR2_PACKAGE_LIBRETRO_NESTOPIA=n
+BR2_PACKAGE_LIBRETRO_PICODRIVE=n
+BR2_PACKAGE_LIBRETRO_MEDNAFEN_PCE_FAST=n
+BR2_PACKAGE_LIBRETRO_MEDNAFEN_SUPERGRAFX=n
+BR2_PACKAGE_LIBRETRO_MEDNAFEN_NGP=n
+BR2_PACKAGE_LIBRETRO_MEDNAFEN_WSWAN=n
+BR2_PACKAGE_LIBRETRO_FBNEO=n
+BR2_PACKAGE_LIBRETRO_MAME2003_PLUS=n
+BR2_PACKAGE_LIBRETRO_CAP32=n
+BR2_PACKAGE_LIBRETRO_FUSE=n
+BR2_PACKAGE_LIBRETRO_VICE_X64=n
+BR2_PACKAGE_LIBRETRO_THEODORE=n
+BR2_PACKAGE_LIBRETRO_PCSX_REARMED=n
+BR2_PACKAGE_LIBRETRO_STELLA=n
+BR2_PACKAGE_LIBRETRO_PROSYSTEM=n
+BR2_PACKAGE_LIBRETRO_HANDY=n
 DEFCONFIG
  
     # Copier la defconfig dans Buildroot
