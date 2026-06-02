@@ -16,3 +16,5 @@ gamestick_custom.img
 # Local uniquement
 rootfs_extracted
 .claude/settings.local.json
+/previous_overlay/
+/userdata/

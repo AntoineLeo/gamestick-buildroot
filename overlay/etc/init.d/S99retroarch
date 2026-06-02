@@ -1,0 +1,47 @@
+#!/bin/sh
+SDCARD=/mnt/sdcard
+RETROARCH_CFG=$SDCARD/retroarch.cfg
+CORES_DIR=$SDCARD/libretro
+LOG_DIR=$SDCARD/logs
+
+case "$1" in
+    start)
+        echo "Démarrage de RetroArch..."
+
+        # Activer HDMI avec retry (la TV peut être en veille au boot)
+        echo on > /sys/class/drm/card0-HDMI-A-1/status 2>/dev/null
+        for i in 1 2 3 4 5; do
+            [ -x /usr/bin/drm-hotplug.sh ] && /usr/bin/drm-hotplug.sh
+            [ -s /tmp/drm_connector.cfg ] && break
+            sleep 1
+        done
+
+        # Créer les répertoires nécessaires
+        mkdir -p $SDCARD/roms $SDCARD/saves $SDCARD/system $SDCARD/config \
+                 $CORES_DIR $LOG_DIR
+
+        # Logs système (dmesg) — écrasé à chaque boot pour avoir le plus récent
+        dmesg > $LOG_DIR/dmesg.log 2>/dev/null
+
+        # Copie initiale config + cores depuis le rootfs si absent de la partition 5
+        [ -f "$RETROARCH_CFG" ] || cp /etc/retroarch/retroarch.cfg $RETROARCH_CFG
+        if [ -z "$(ls -A $CORES_DIR 2>/dev/null)" ]; then
+            cp /usr/lib/libretro/*.so $CORES_DIR/ 2>/dev/null || true
+        fi
+
+        # Forcer le flush sur le disque avant de lancer RetroArch
+        sync
+
+        export HOME=/root
+        export XDG_CONFIG_HOME=$SDCARD
+        export XDG_RUNTIME_DIR=$SDCARD
+
+        sleep 2
+
+        /usr/bin/retroarch --config $RETROARCH_CFG --verbose \
+            > $LOG_DIR/retroarch.log 2>&1 &
+        ;;
+    stop)
+        killall retroarch 2>/dev/null
+        ;;
+esac

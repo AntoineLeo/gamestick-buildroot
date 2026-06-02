@@ -35,8 +35,6 @@ OUTPUT_DIR="${WORKDIR}/output"
 CORES_DIR="${WORKDIR}/cores"
 OVERLAY_DIR="${WORKDIR}/overlay"
 DEFCONFIG="${WORKDIR}/configs/gamestick_rk3032_defconfig"
-GAMESTICK_BACKUP_IMG="./gamestick_orig.img"  # Chemin vers l'image backup de ta SD originale
- 
 # Cores à compiler (adaptés aux 256 Mo de RAM du RK3032)
 # Légers = OK, Lourds = à éviter (PPSSPP, Dolphin, etc.)
 LIBRETRO_CORES=(
@@ -167,6 +165,9 @@ setup_mali_headers() {
     for f in GLES2/gl2.h GLES2/gl2ext.h GLES2/gl2platform.h; do
         [ -f "${HEADERS_DIR}/${f}" ] || wget -q -O "${HEADERS_DIR}/${f}" "${GL_BASE}/${f}"
     done
+    [ -f "${HEADERS_DIR}/gbm.h" ] || \
+        wget -q -O "${HEADERS_DIR}/gbm.h" \
+        "https://gitlab.freedesktop.org/mesa/mesa/-/raw/mesa-23.0.0/src/gbm/main/gbm.h"
 
     # Générer le stub C GLES2 depuis le header téléchargé
     if [ ! -f "${HEADERS_DIR}/gles2_stub.c" ]; then
@@ -231,7 +232,7 @@ RETROARCH_SITE = \$(call github,libretro,RetroArch,\$(RETROARCH_VERSION))
 RETROARCH_LICENSE = GPL-3.0+
 RETROARCH_LICENSE_FILES = COPYING
  
-RETROARCH_DEPENDENCIES = host-pkgconf zlib alsa-lib eudev freetype
+RETROARCH_DEPENDENCIES = host-pkgconf zlib alsa-lib eudev freetype libdrm
 
 # --- Options de configuration ---
 
@@ -240,11 +241,10 @@ RETROARCH_CONF_OPTS = \
     --disable-wayland \
     --enable-opengles \
     --enable-egl \
-    --enable-dynamic_egl \
-    --enable-mali_fbdev \
+    --disable-dynamic_egl \
     --disable-opengl \
     --disable-vulkan \
-    --disable-kms \
+    --enable-kms \
     --enable-neon \
     --enable-floathard \
     --enable-threads \
@@ -301,19 +301,62 @@ define RETROARCH_INSTALL_MALI_HEADERS
 	$(foreach d,EGL GLES2 KHR,\
 		mkdir -p $(STAGING_DIR)/usr/include/$(d) && \
 		cp -n $(TOPDIR)/../mali-headers-src/$(d)/* $(STAGING_DIR)/usr/include/$(d)/ 2>/dev/null || true ;)
-	test -f $(STAGING_DIR)/usr/lib/libEGL.so || \
-		echo "void _egl_stub(void){}" | $(TARGET_CC) -shared -fPIC -o $(STAGING_DIR)/usr/lib/libEGL.so -x c -
-	$(TARGET_CC) -shared -fPIC \
-		-I$(STAGING_DIR)/usr/include \
-		-o $(STAGING_DIR)/usr/lib/libGLESv2.so \
-		$(TOPDIR)/../mali-headers-src/gles2_stub.c
+	cp -n $(TOPDIR)/../mali-headers-src/gbm.h $(STAGING_DIR)/usr/include/ 2>/dev/null || true
+	cp -f $(TOPDIR)/../overlay/usr/lib/libmali-utgard-400-r7p0-gbm.so $(STAGING_DIR)/usr/lib/
+	ln -sf libmali-utgard-400-r7p0-gbm.so $(STAGING_DIR)/usr/lib/libgbm.so
+	ln -sf libmali-utgard-400-r7p0-gbm.so $(STAGING_DIR)/usr/lib/libEGL.so
+	ln -sf libmali-utgard-400-r7p0-gbm.so $(STAGING_DIR)/usr/lib/libGLESv2.so
+	mkdir -p $(STAGING_DIR)/usr/lib/pkgconfig
+	printf 'prefix=/usr\nincludedir=$${prefix}/include\nlibdir=$${prefix}/lib\nName: egl\nDescription: EGL library\nVersion: 1.5\nLibs: -L$${libdir} -lEGL\nCflags: -I$${includedir}\n' \
+		> $(STAGING_DIR)/usr/lib/pkgconfig/egl.pc
+	printf 'prefix=/usr\nincludedir=$${prefix}/include\nlibdir=$${prefix}/lib\nName: glesv2\nDescription: GLES2 library\nVersion: 2.0\nLibs: -L$${libdir} -lGLESv2\nCflags: -I$${includedir}\n' \
+		> $(STAGING_DIR)/usr/lib/pkgconfig/glesv2.pc
+	printf 'prefix=/usr\nincludedir=$${prefix}/include\nlibdir=$${prefix}/lib\nName: gbm\nDescription: Mesa GBM\nVersion: 23.0\nLibs: -L$${libdir} -lgbm\nCflags: -I$${includedir}\n' \
+		> $(STAGING_DIR)/usr/lib/pkgconfig/gbm.pc
 endef
 RETROARCH_PRE_CONFIGURE_HOOKS += RETROARCH_INSTALL_MALI_HEADERS
 
 define RETROARCH_FIX_CONFIG
 	$(SED) 's%-I/usr/include%-I$(STAGING_DIR)/usr/include%g' $(@D)/config.mk
+	$(SED) 's%^LDFLAGS = $$%LDFLAGS = -Wl,--allow-shlib-undefined%' $(@D)/config.mk
 endef
 RETROARCH_POST_CONFIGURE_HOOKS += RETROARCH_FIX_CONFIG
+
+define RETROARCH_FIX_EGL_DLL
+	# BUG RetroArch (double) dans gfx/common/egl_common.c :
+	#
+	# 1) egl_init_dll() utilise dylib_load("libEGL.dll") — nom DLL Windows
+	#    hardcodé sans #ifdef _WIN32. Sur Linux ce dlopen() échoue silencieusement,
+	#    laissant tous les pointeurs EGL (_egl_bind_api, etc.) à NULL.
+	#
+	# 2) egl_init_dll() n'est jamais appelée sur le chemin Linux/KMS :
+	#    drm_ctx.c::bind_api() appelle egl_bind_api() directement, alors que
+	#    egl_init_dll() n'est invoquée que depuis angle_common.c (chemin ANGLE/Windows).
+	#    Résultat : _egl_bind_api reste NULL → SIGSEGV PC=0 au premier appel.
+	#
+	# Fix via Python (robuste, évite les problèmes de \n dans sed) :
+	python3 -c '\
+import sys; \
+f = sys.argv[1]; \
+s = open(f).read(); \
+s = s.replace("dylib_load(\"libEGL.dll\")", "dylib_load(\"libEGL.so.1\")"); \
+s = s.replace(\
+    "   return _egl_bind_api(egl_api);",\
+    "#ifdef HAVE_DYNAMIC_EGL\n   if (!_egl_bind_api) egl_init_dll();\n   if (!_egl_bind_api) return false;\n#endif\n   return _egl_bind_api(egl_api);"\
+); \
+open(f, "w").write(s)' \
+		$(@D)/gfx/common/egl_common.c
+endef
+RETROARCH_POST_CONFIGURE_HOOKS += RETROARCH_FIX_EGL_DLL
+
+define RETROARCH_INSTALL_MALI_TARGET
+	mkdir -p $(TARGET_DIR)/usr/lib
+	cp -f $(TOPDIR)/../overlay/usr/lib/libmali-utgard-400-r7p0-gbm.so $(TARGET_DIR)/usr/lib/
+	ln -sf libmali-utgard-400-r7p0-gbm.so $(TARGET_DIR)/usr/lib/libgbm.so
+	ln -sf libmali-utgard-400-r7p0-gbm.so $(TARGET_DIR)/usr/lib/libEGL.so
+	ln -sf libmali-utgard-400-r7p0-gbm.so $(TARGET_DIR)/usr/lib/libGLESv2.so
+endef
+RETROARCH_POST_INSTALL_TARGET_HOOKS += RETROARCH_INSTALL_MALI_TARGET
 
 $(eval $(generic-package))
 RETROMK
@@ -518,6 +561,7 @@ BR2_DEFAULT_KERNEL_HEADERS="4.4.302"
 BR2_DEFAULT_KERNEL_VERSION="4.4.302"
 BR2_PACKAGE_GLIBC_KERNEL_COMPAT=y
 BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_TOOLCHAIN_BUILDROOT_WCHAR=y
 BR2_TOOLCHAIN_HAS_SSP=n
 BR2_SSP_NONE=y
 BR2_RELRO_NONE=y
@@ -544,6 +588,9 @@ BR2_TARGET_ROOTFS_TAR=y
 # --- Paquets système de base ---
 BR2_PACKAGE_BUSYBOX=y
 BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
+BR2_PACKAGE_BASH=y
+BR2_PACKAGE_DOSFSTOOLS=y
+BR2_PACKAGE_SEEDRNG=n
 
 # --- Ajout dépendance RetroArch
 BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
@@ -568,7 +615,10 @@ BR2_PACKAGE_FREETYPE=y
 
 # --- Outils debug ---
 BR2_PACKAGE_STRACE=y
-BR2_PACKAGE_GDB=n
+BR2_PACKAGE_GDB=y
+BR2_PACKAGE_GDB_DEBUGGER=y
+BR2_STRIP_NONE=y
+BR2_ENABLE_DEBUG=y
 
 # --- RetroArch ---
 BR2_PACKAGE_RETROARCH=y
@@ -716,42 +766,33 @@ cmd_cores() {
 # =============================================================================
  
 cmd_image() {
-    log "Assemblage de l'image SD finale..."
- 
-    # --- Le rootfs Buildroot peut être en ext4 ou squashfs ---
-    # Le GameStick d'origine utilise squashfs compressé gzip.
-    # On convertit notre rootfs ext4/tar en squashfs pour correspondre.
+    log "Génération de l'image rootfs (partition 4)..."
+
     local ROOTFS_TAR="${BUILDROOT_DIR}/output/images/rootfs.tar"
     local ROOTFS_EXT4="${BUILDROOT_DIR}/output/images/rootfs.ext4"
-    local ROOTFS_SQUASHFS="${OUTPUT_DIR}/rootfs_new.img"
-    local FINAL_IMG="${OUTPUT_DIR}/gamestick_custom.img"
- 
+    local ROOTFS_SQUASHFS="${OUTPUT_DIR}/rootfs_p4.squashfs"
+    # Taille de la partition 4 sur le GameStick Lite 4K : 65 Mo
+    local PART4_MAX_SIZE=$(( 65 * 1024 * 1024 ))
+
     if [ ! -f "${ROOTFS_TAR}" ] && [ ! -f "${ROOTFS_EXT4}" ]; then
         err "Aucun rootfs trouvé. Lancez d'abord ./build.sh build"
         exit 1
     fi
- 
-    if [ -z "${GAMESTICK_BACKUP_IMG}" ] || [ ! -f "${GAMESTICK_BACKUP_IMG}" ]; then
-        err "Image backup non configurée !"
-        err "Définis GAMESTICK_BACKUP_IMG dans build.sh (chemin vers ton dump gamestick_orig.img)"
-        exit 1
-    fi
- 
+
     mkdir -p "${OUTPUT_DIR}"
- 
+
     # =========================================================================
     # Étape 1 : Convertir le rootfs en squashfs (format du GameStick)
     # =========================================================================
     log "Conversion du rootfs en squashfs (gzip)..."
- 
+
     local ROOTFS_EXTRACT="${OUTPUT_DIR}/rootfs_extracted"
     rm -rf "${ROOTFS_EXTRACT}"
     mkdir -p "${ROOTFS_EXTRACT}"
- 
+
     if [ -f "${ROOTFS_TAR}" ]; then
         tar xf "${ROOTFS_TAR}" -C "${ROOTFS_EXTRACT}"
     else
-        # Monter l'ext4 et copier
         local TMP_MNT="${OUTPUT_DIR}/tmp_mnt"
         mkdir -p "${TMP_MNT}"
         sudo mount -o loop,ro "${ROOTFS_EXT4}" "${TMP_MNT}"
@@ -759,122 +800,38 @@ cmd_image() {
         sudo umount "${TMP_MNT}"
         rmdir "${TMP_MNT}"
     fi
- 
+
+    # Appliquer l'overlay — intègre les dernières modifications sans rebuild complet
+    sudo cp -a "${OVERLAY_DIR}/." "${ROOTFS_EXTRACT}/"
+
     rm -f "${ROOTFS_SQUASHFS}"
     sudo mksquashfs "${ROOTFS_EXTRACT}" "${ROOTFS_SQUASHFS}" \
         -comp gzip -noappend -quiet
- 
-    local NEW_SIZE=$(stat -c%s "${ROOTFS_SQUASHFS}")
-    log "Nouveau rootfs squashfs : $(( NEW_SIZE / 1024 / 1024 )) Mo"
- 
+
     rm -rf "${ROOTFS_EXTRACT}"
- 
-    # =========================================================================
-    # Étape 2 : Copier l'image originale
-    # =========================================================================
-    log "Copie de l'image originale..."
-    cp "${GAMESTICK_BACKUP_IMG}" "${FINAL_IMG}"
- 
-    # =========================================================================
-    # Étape 3 : Monter l'image avec losetup et identifier les partitions
-    # =========================================================================
-    log "Montage de l'image avec losetup..."
- 
-    # Détacher tout loop device existant sur cette image
-    sudo losetup -j "${FINAL_IMG}" | cut -d: -f1 | while read dev; do
-        sudo losetup -d "$dev" 2>/dev/null || true
-    done
- 
-    sudo losetup -fP "${FINAL_IMG}"
-    local LOOP_DEV=$(losetup -j "${FINAL_IMG}" | head -1 | cut -d: -f1)
- 
-    if [ -z "${LOOP_DEV}" ]; then
-        err "Impossible de monter l'image avec losetup"
+
+    local NEW_SIZE=$(stat -c%s "${ROOTFS_SQUASHFS}")
+    log "Rootfs squashfs : $(( NEW_SIZE / 1024 / 1024 )) Mo"
+
+    if [ "${NEW_SIZE}" -gt "${PART4_MAX_SIZE}" ]; then
+        err "Le rootfs ($(( NEW_SIZE / 1024 / 1024 )) Mo) dépasse la taille de la partition 4 (65 Mo) !"
+        err "Réduis le contenu du rootfs."
         exit 1
     fi
- 
-    log "Image montée sur ${LOOP_DEV}"
- 
-    # Afficher les partitions détectées
-    log "Partitions détectées :"
-    sudo fdisk -l "${LOOP_DEV}" 2>/dev/null | grep "^${LOOP_DEV}" || true
-    echo ""
- 
+
     # =========================================================================
-    # Étape 4 : Identifier la partition rootfs
+    # Étape 2 : Vérification du squashfs
     # =========================================================================
-    # Sur le GameStick, c'est la partition 4 (après uboot, trust, boot)
-    # On la détecte par sa position : 4ème partition dans la table
-    local ROOTFS_PART="${LOOP_DEV}p4"
- 
-    if [ ! -b "${ROOTFS_PART}" ]; then
-        err "Partition ${ROOTFS_PART} introuvable."
-        err "Partitions disponibles :"
-        ls -la ${LOOP_DEV}p* 2>/dev/null || true
-        sudo losetup -d "${LOOP_DEV}"
-        exit 1
-    fi
- 
-    # Lire la taille de la partition rootfs d'origine (en octets)
-    local PART_SIZE=$(sudo blockdev --getsize64 "${ROOTFS_PART}")
-    log "Partition rootfs (${ROOTFS_PART}) : $(( PART_SIZE / 1024 / 1024 )) Mo"
- 
-    # Vérifier que le nouveau rootfs tient dans la partition
-    if [ "${NEW_SIZE}" -gt "${PART_SIZE}" ]; then
-        err "Le nouveau rootfs ($(( NEW_SIZE / 1024 / 1024 )) Mo) est trop grand"
-        err "pour la partition ($(( PART_SIZE / 1024 / 1024 )) Mo) !"
-        err "Réduis le contenu du rootfs ou agrandis la partition."
-        sudo losetup -d "${LOOP_DEV}"
-        exit 1
-    fi
- 
-    # =========================================================================
-    # Étape 5 : Vérifier le rootfs d'origine (avant remplacement)
-    # =========================================================================
-    log "Vérification du rootfs d'origine..."
-    local ORIG_MNT="${OUTPUT_DIR}/orig_rootfs_mnt"
-    mkdir -p "${ORIG_MNT}"
- 
-    if sudo mount -t squashfs -o ro "${ROOTFS_PART}" "${ORIG_MNT}" 2>/dev/null; then
-        log "  Rootfs d'origine OK (squashfs)"
-        log "  Contenu : $(ls "${ORIG_MNT}" | tr '\n' ' ')"
- 
-        # Vérifier la présence de RetroArch d'origine
-        if [ -f "${ORIG_MNT}/usr/bin/retroarch" ]; then
-            log "  RetroArch d'origine trouvé"
-        fi
-        if [ -f "${ORIG_MNT}/usr/bin/game" ]; then
-            log "  Frontend MiniGUI d'origine trouvé"
-        fi
- 
-        sudo umount "${ORIG_MNT}"
-    else
-        warn "Impossible de monter le rootfs d'origine (pas du squashfs ?)"
-    fi
- 
-    # =========================================================================
-    # Étape 6 : Écrire le nouveau rootfs
-    # =========================================================================
-    log "Écriture du nouveau rootfs sur ${ROOTFS_PART}..."
-    sudo dd if="${ROOTFS_SQUASHFS}" of="${ROOTFS_PART}" \
-        bs=4M conv=notrunc status=progress
- 
-    sync
- 
-    # =========================================================================
-    # Étape 7 : Vérification post-écriture
-    # =========================================================================
-    log "Vérification post-écriture..."
- 
-    if sudo mount -t squashfs -o ro "${ROOTFS_PART}" "${ORIG_MNT}" 2>/dev/null; then
-        log "  ✅ Rootfs montable en squashfs"
- 
-        # Vérifier les fichiers critiques
+    log "Vérification du squashfs..."
+
+    local VERIFY_MNT="${OUTPUT_DIR}/verify_mnt"
+    mkdir -p "${VERIFY_MNT}"
+
+    if sudo mount -t squashfs -o ro "${ROOTFS_SQUASHFS}" "${VERIFY_MNT}" 2>/dev/null; then
         local CHECK_OK=true
- 
-        if [ -f "${ORIG_MNT}/usr/bin/retroarch" ]; then
-            local RA_ARCH=$(file "${ORIG_MNT}/usr/bin/retroarch" 2>/dev/null)
-            if echo "${RA_ARCH}" | grep -q "ARM"; then
+
+        if [ -f "${VERIFY_MNT}/usr/bin/retroarch" ]; then
+            if file "${VERIFY_MNT}/usr/bin/retroarch" 2>/dev/null | grep -q "ARM"; then
                 log "  ✅ RetroArch présent (ARM)"
             else
                 err "  ❌ RetroArch n'est pas un binaire ARM !"
@@ -884,61 +841,54 @@ cmd_image() {
             err "  ❌ RetroArch absent du rootfs !"
             CHECK_OK=false
         fi
- 
-        # Compter les cores
-        local CORE_COUNT=$(find "${ORIG_MNT}/usr/lib/libretro/" -name "*.so" 2>/dev/null | wc -l)
+
+        local CORE_COUNT=$(find "${VERIFY_MNT}/usr/lib/libretro/" -name "*.so" 2>/dev/null | wc -l)
         if [ "${CORE_COUNT}" -gt 0 ]; then
             log "  ✅ ${CORE_COUNT} cores libretro installés"
         else
             warn "  ⚠ Aucun core libretro dans le rootfs"
         fi
- 
-        # Vérifier le script de démarrage
-        if [ -f "${ORIG_MNT}/etc/init.d/S99retroarch" ]; then
+
+        if [ -f "${VERIFY_MNT}/etc/init.d/S99retroarch" ]; then
             log "  ✅ Script de démarrage S99retroarch présent"
         else
             warn "  ⚠ Script S99retroarch absent"
         fi
- 
-        # Vérifier la config RetroArch
-        if [ -f "${ORIG_MNT}/etc/retroarch/retroarch.cfg" ]; then
+
+        if [ -f "${VERIFY_MNT}/etc/retroarch/retroarch.cfg" ]; then
             log "  ✅ Configuration RetroArch présente"
         else
             warn "  ⚠ retroarch.cfg absent"
         fi
- 
-        sudo umount "${ORIG_MNT}"
- 
+
+        sudo umount "${VERIFY_MNT}"
+
         if [ "${CHECK_OK}" = false ]; then
+            rmdir "${VERIFY_MNT}" 2>/dev/null
             err "Certaines vérifications ont échoué !"
+            exit 1
         fi
     else
-        err "  ❌ Impossible de monter le nouveau rootfs !"
-        err "  L'image est probablement corrompue."
-        sudo losetup -d "${LOOP_DEV}"
-        rmdir "${ORIG_MNT}" 2>/dev/null
+        rmdir "${VERIFY_MNT}" 2>/dev/null
+        err "Impossible de monter le squashfs généré !"
         exit 1
     fi
- 
-    rmdir "${ORIG_MNT}" 2>/dev/null
- 
-    # =========================================================================
-    # Étape 8 : Nettoyage
-    # =========================================================================
-    sudo losetup -d "${LOOP_DEV}"
-    rm -f "${ROOTFS_SQUASHFS}"
- 
+
+    rmdir "${VERIFY_MNT}" 2>/dev/null
+
     log ""
     log "=========================================="
-    log "  IMAGE PRÊTE !"
+    log "  IMAGE PARTITION 4 PRÊTE !"
     log "=========================================="
     log ""
-    log "Fichier : ${FINAL_IMG}"
-    log "Taille  : $(( $(stat -c%s "${FINAL_IMG}") / 1024 / 1024 )) Mo"
+    log "Fichier : ${ROOTFS_SQUASHFS}"
+    log "Taille  : $(( NEW_SIZE / 1024 / 1024 )) Mo / 65 Mo max"
     log ""
-    log "Pour flasher sur SD :"
-    log "  sudo dd if=${FINAL_IMG} of=/dev/sdX bs=4M status=progress conv=fsync"
-    log "  Ou utilise balenaEtcher sous Windows."
+    log "Pour flasher sur la carte SD (carte insérée, GameStick éteint) :"
+    log "  sudo dd if=${ROOTFS_SQUASHFS} of=/dev/sdc4 bs=4M status=progress conv=fsync"
+    log ""
+    log "  Remplace sdc4 par le device de ta carte SD, ex :"
+    log "  /dev/sdb4  si la carte est vue comme /dev/sdb"
 }
  
 # =============================================================================
@@ -978,7 +928,7 @@ case "${1:-help}" in
         echo "  configure   Applique la defconfig GameStick RK3032"
         echo "  build       Compile tout (rootfs + RetroArch + cores)"
         echo "  cores       Compile des cores supplémentaires"
-        echo "  image       Assemble l'image SD finale"
+        echo "  image       Génère l'image squashfs de la partition 4 (rootfs)"
         echo "  all         Exécute toutes les étapes"
         echo "  menuconfig  Lance le configurateur interactif Buildroot"
         echo "  clean       Nettoie les fichiers de compilation"

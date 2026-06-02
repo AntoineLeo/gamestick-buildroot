@@ -611,4 +611,23 @@ menu_driver = "rgui"
 
 ---
 
+## 12. Debugguer le projet
+
+Tracer l'appel à retroarch
+```bash
+strace -i -s 256 -o /mnt/sdcard/logs/strace_full.txt \
+    /usr/bin/retroarch --config /mnt/sdcard/retroarch.cfg --verbose \
+    2>/mnt/sdcard/logs/ra_manual.log
+```
+
+
+### Debugguer avec GDB
+gdb --batch \
+    -ex 'handle SIGSEGV stop' \
+    -ex run \
+    -ex 'info proc mappings' \
+    -ex 'x/6i ($lr - 8)' \
+    -ex 'info registers' \
+    --args /usr/bin/retroarch --config /mnt/sdcard/retroarch.cfg --verbose
+
 *Document généré le 4 avril 2026 — Session de reverse-engineering et modification du Game Stick Lite 4K.*
